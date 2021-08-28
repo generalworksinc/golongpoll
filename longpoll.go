@@ -35,7 +35,7 @@ type HttpContext struct {
 func makeContextByGoHttp(writer http.ResponseWriter, request *http.Request) *HttpContext {
 	return &HttpContext{
 		ResponseSetStatus:  writer.WriteHeader,
-		ResponseSetHeader:  func(key string, value string) { writer.Header().Set(key, value) },
+		ResponseSetHeader:  writer.Header().Set,
 		ResponseBodyWriter: writer,
 		RequestBodyReader:  request.Body,
 		Query:              func(key string) string { return request.URL.Query().Get(key) },
