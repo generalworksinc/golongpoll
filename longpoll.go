@@ -21,6 +21,73 @@ const (
 	forever = -1001
 )
 
+type HttpContext struct {
+	ResponseSetStatus  func(status int)
+	ResponseSetHeader  func(key string, value string)
+	ResponseBodyWriter io.Writer
+	RequestBodyReader  io.Reader
+	Query              func(key string) string
+	Method             string
+	Done               func() <-chan struct{}
+	URL                string
+}
+
+func makeContextByGoHttp(writer http.ResponseWriter, request *http.Request) *HttpContext {
+	return &HttpContext{
+		ResponseSetStatus:  writer.WriteHeader,
+		ResponseSetHeader:  func(key string, value string) { writer.Header().Set(key, value) },
+		ResponseBodyWriter: writer,
+		RequestBodyReader:  request.Body,
+		Query:              func(key string) string { return request.URL.Query().Get(key) },
+		Method:             request.Method,
+		Done:               func() <-chan struct{} { return request.Context().Done() },
+		URL:                request.URL.String(),
+	}
+}
+func SubscriptionHandlerWithGoHttp(manager *LongpollManager) func(writer http.ResponseWriter, request *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		ctx := makeContextByGoHttp(writer, request)
+		manager.SubscriptionHandler(ctx)
+	}
+}
+func PublishHandlerWithGoHttp(manager *LongpollManager) func(writer http.ResponseWriter, request *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		ctx := makeContextByGoHttp(writer, request)
+		manager.PublishHandler(ctx)
+	}
+}
+
+//func Fiber () HttpContext {
+//	return HttpContext{
+//		ResponseSetStatus:  writer.WriteHeader,
+//		ResponseSetHeader:  func(key string, value string) { writer.Header().Set(key, value) },
+//		ResponseBodyWriter: writer,
+//		RequestBodyReader:  request.Body,
+//		Query:              func(key string) string { return request.URL.Query().Get(key) },
+//		Method:             request.Method,
+//		Done:               func() <-chan struct{} { return request.Context().Done() },
+//		URL:                request.URL.String(),
+//	}
+//}
+//type GoHttpContext = struct{
+//	Request *http.Request
+//	ResponseWriter *http.ResponseWriter
+//
+//	ResponseSetStatus func(status int)
+//	ResponseSetHeader func(key string, value string)
+//	ResponseAppendBody func(body string)
+//	Method func() string
+//}
+//type FastHttpContext = struct{
+//	FastHttp
+//	ResponseWriter *http.ResponseWriter
+//
+//	ResponseSetStatus func(status int)
+//	ResponseSetHeader func(key string, value string)
+//	ResponseAppendBody func(body string)
+//	Method func() string
+//}
+
 // LongpollManager is used to interact with the internal longpolling pup-sub
 // goroutine that is launched via StartLongpoll(Options).
 //
@@ -43,7 +110,8 @@ type LongpollManager struct {
 	// SubscriptionHandler is an Http handler function that can be served
 	// directly or wrapped within another handler function that adds additional
 	// behavior like authentication or business logic.
-	SubscriptionHandler func(w http.ResponseWriter, r *http.Request)
+	//SubscriptionHandler func(w http.ResponseWriter, r *http.Request)
+	SubscriptionHandler func(ctx *HttpContext)
 	// PublishHandler is an Http handler function that can be served directly
 	// or wrapped within another handler function that adds additional
 	// behavior like authentication or business logic. If one does not want
@@ -53,7 +121,8 @@ type LongpollManager struct {
 	// category or data is allowed. It is entirely permissive by default.
 	// For more production-type uses, wrap this with a http handler that
 	// limits what can be published.
-	PublishHandler func(w http.ResponseWriter, r *http.Request)
+	//PublishHandler func(w http.ResponseWriter, r *http.Request)
+	PublishHandler func(ctx *HttpContext)
 	// flag whether or not StartLongpoll has been called
 	started bool
 	// flag whether or not LongpollManager.Shutdown has been called--enforces
@@ -324,70 +393,82 @@ type PublishData struct {
 	Data     interface{} `json:"data"`
 }
 
-func getLongPollPublishHandler(manager *LongpollManager) func(w http.ResponseWriter, r *http.Request) {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("X-Content-Type-Options", "nosniff")
+//func getLongPollPublishHandler(manager *LongpollManager) func(w http.ResponseWriter, r *http.Request) {
+func getLongPollPublishHandler(manager *LongpollManager) func(ctx *HttpContext) {
+	//return func(w http.ResponseWriter, r *http.Request) {
+	return func(ctx *HttpContext) {
+		w := ctx.ResponseBodyWriter
+		ctx.ResponseSetHeader("Content-Type", "application/json")
+		ctx.ResponseSetHeader("X-Content-Type-Options", "nosniff")
+		//w.Header().Set("Content-Type", "application/json")
+		//w.Header().Set("X-Content-Type-Options", "nosniff")
 
-		if r.Method != http.MethodPost {
-			w.WriteHeader(http.StatusMethodNotAllowed)
+		if ctx.Method != http.MethodPost {
+			//if r.Method != http.MethodPost {
+			ctx.ResponseSetStatus(http.StatusMethodNotAllowed)
+			//	w.WriteHeader(http.StatusMethodNotAllowed)
 			fmt.Fprintf(w, "{\"error\": \"Invalid HTTP Method. Only POST allowed.\"}")
-			log.Printf("WARN - golongpoll.publishHandler - Invalid HTTP method: %v, only POST allowed.\n", r.Method)
+			log.Printf("WARN - golongpoll.publishHandler - Invalid HTTP method: %v, only POST allowed.\n", ctx.Method)
 			return
 		}
 
-		decoder := json.NewDecoder(r.Body)
+		decoder := json.NewDecoder(ctx.RequestBodyReader)
 		var pubData PublishData
 		err := decoder.Decode(&pubData)
 		if err != nil {
-			w.WriteHeader(http.StatusBadRequest)
+			ctx.ResponseSetStatus(http.StatusBadRequest)
 			fmt.Fprintf(w, "{\"error\": \"Invalid POST body json.\"}")
 			log.Printf("WARN - golongpoll.publishHandler - Invalid post body json, error: %v\n", err)
 			return
 		}
 
 		if len(pubData.Category) == 0 || len(pubData.Category) > 1024 {
-			w.WriteHeader(http.StatusBadRequest)
+			ctx.ResponseSetStatus(http.StatusBadRequest)
 			io.WriteString(w, "{\"error\": \"Invalid or missing 'category' arg, must be 1-1024 characters long.\"}")
 			log.Println("WARN - golongpoll.publishHandler - Invalid or missing subscription 'category', must be 1-1024 characters long.")
 			return
 		}
 
 		if pubData.Data == nil {
-			w.WriteHeader(http.StatusBadRequest)
+			ctx.ResponseSetStatus(http.StatusBadRequest)
 			log.Println("WARN - golongpoll.publishHandler - Invalid or missing publish data. Must be non-nil.")
 			io.WriteString(w, "{\"error\": \"Invalid or missing 'data' arg, must be non-nil.\"}")
 			return
 		}
 
 		manager.Publish(pubData.Category, pubData.Data)
-		w.WriteHeader(http.StatusOK)
+		ctx.ResponseSetStatus(http.StatusOK)
 		io.WriteString(w, "{\"success\": true}")
 	}
 }
 
 // get web handler that has closure around sub chanel and clientTimeout channnel
 func getLongPollSubscriptionHandler(maxTimeoutSeconds int, subscriptionRequests chan *clientSubscription,
-	clientTimeouts chan<- *clientCategoryPair, loggingEnabled bool) func(w http.ResponseWriter, r *http.Request) {
-	return func(w http.ResponseWriter, r *http.Request) {
-		timeout, err := strconv.Atoi(r.URL.Query().Get("timeout"))
+	//clientTimeouts chan<- *clientCategoryPair, loggingEnabled bool) func(w http.ResponseWriter, r *http.Request) {
+	clientTimeouts chan<- *clientCategoryPair, loggingEnabled bool) func(ctx *HttpContext) {
+	//return func(w http.ResponseWriter, r *http.Request) {
+	return func(ctx *HttpContext) {
+		w := ctx.ResponseBodyWriter
+		//timeout, err := strconv.Atoi(r.URL.Query().Get("timeout"))
+		timeout, err := strconv.Atoi(ctx.Query("timeout"))
 		if loggingEnabled {
-			log.Println("INFO - golongpoll.subscriptionHandler - Handling HTTP request at ", r.URL)
+			//log.Println("INFO - golongpoll.subscriptionHandler - Handling HTTP request at ", r.URL)
+			log.Println("INFO - golongpoll.subscriptionHandler - Handling HTTP request at ", ctx.URL)
 		}
 		// We are going to return json no matter what:
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("X-Content-Type-Options", "nosniff")
+		ctx.ResponseSetHeader("Content-Type", "application/json")
+		ctx.ResponseSetHeader("X-Content-Type-Options", "nosniff")
 		// Don't cache response:
-		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate") // HTTP 1.1.
-		w.Header().Set("Pragma", "no-cache")                                   // HTTP 1.0.
-		w.Header().Set("Expires", "0")                                         // Proxies.
+		ctx.ResponseSetHeader("Cache-Control", "no-cache, no-store, must-revalidate") // HTTP 1.1.
+		ctx.ResponseSetHeader("Pragma", "no-cache")                                   // HTTP 1.0.
+		ctx.ResponseSetHeader("Expires", "0")                                         // Proxies.
 		if err != nil || timeout > maxTimeoutSeconds || timeout < 1 {
 			log.Printf("WARN - golongpoll.subscriptionHandler - Invalid or missing 'timeout' param. Must be 1-%d. Got: %q.\n",
-				maxTimeoutSeconds, r.URL.Query().Get("timeout"))
+				maxTimeoutSeconds, ctx.Query("timeout"))
 			io.WriteString(w, fmt.Sprintf("{\"error\": \"Invalid or missing 'timeout' arg.  Must be 1-%d.\"}", maxTimeoutSeconds))
 			return
 		}
-		category := r.URL.Query().Get("category")
+		category := ctx.Query("category")
 		if len(category) == 0 || len(category) > 1024 {
 			log.Printf("WARN - golongpoll.subscriptionHandler - Invalid or missing subscription 'category', must be 1-1024 characters long.\n")
 			io.WriteString(w, "{\"error\": \"Invalid subscription category, must be 1-1024 characters long.\"}")
@@ -396,7 +477,7 @@ func getLongPollSubscriptionHandler(maxTimeoutSeconds int, subscriptionRequests 
 		// Default to only looking for current events
 		lastEventTime := time.Now()
 		// since_time is string of milliseconds since epoch
-		lastEventTimeParam := r.URL.Query().Get("since_time")
+		lastEventTimeParam := ctx.Query("since_time")
 		if len(lastEventTimeParam) > 0 {
 			// Client is requesting any event from given timestamp
 			// parse time
@@ -412,7 +493,7 @@ func getLongPollSubscriptionHandler(maxTimeoutSeconds int, subscriptionRequests 
 
 		var lastEventID *uuid.UUID
 
-		lastIdParam := r.URL.Query().Get("last_id")
+		lastIdParam := ctx.Query("last_id")
 
 		if len(lastIdParam) > 0 {
 			// further restricting since_time to additionally get events since given last even ID.
@@ -446,7 +527,8 @@ func getLongPollSubscriptionHandler(maxTimeoutSeconds int, subscriptionRequests 
 		// event that a client crashes or the connection goes down.  We don't
 		// need to wait around to fulfill a subscription if no one is going to
 		// receive it
-		disconnectNotify := r.Context().Done()
+		//disconnectNotify := r.Context().Done()
+		disconnectNotify := ctx.Done()
 		select {
 		case <-time.After(time.Duration(timeout) * time.Second):
 			// Lets the subscription manager know it can discard this request's

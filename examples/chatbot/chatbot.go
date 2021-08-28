@@ -37,8 +37,9 @@ func main() {
 	http.HandleFunc("/js/client.js", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, *staticClientJs)
 	})
-	http.HandleFunc("/chatbot/events", manager.SubscriptionHandler)
-	http.HandleFunc("/chatbot/send", manager.PublishHandler)
+	http.HandleFunc("/chatbot/events", golongpoll.SubscriptionHandlerWithGoHttp(manager))
+	//http.HandleFunc("/chatbot/send", manager.PublishHandler)
+	http.HandleFunc("/chatbot/send", golongpoll.PublishHandlerWithGoHttp(manager))
 	fmt.Println("Serving webpage at http://127.0.0.1:8101/chatbot")
 	go beChatbot(manager)
 	http.ListenAndServe("127.0.0.1:8101", nil)
