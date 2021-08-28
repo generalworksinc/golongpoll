@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jcuga/golongpoll"
-	"github.com/jcuga/golongpoll/client"
+	"github.com/generalworksinc/golongpoll"
+	"github.com/generalworksinc/golongpoll/client"
 )
 
 func main() {

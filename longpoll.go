@@ -44,16 +44,17 @@ func makeContextByGoHttp(writer http.ResponseWriter, request *http.Request) *Htt
 		URL:                request.URL.String(),
 	}
 }
-func SubscriptionHandlerWithGoHttp(manager *LongpollManager) func(writer http.ResponseWriter, request *http.Request) error {
-	return func(writer http.ResponseWriter, request *http.Request) error {
+func SubscriptionHandlerWithGoHttp(manager *LongpollManager) func(writer http.ResponseWriter, request *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
 		ctx := makeContextByGoHttp(writer, request)
-		return manager.SubscriptionHandler(ctx)
+		manager.SubscriptionHandler(ctx)
 	}
 }
-func PublishHandlerWithGoHttp(manager *LongpollManager) func(writer http.ResponseWriter, request *http.Request) error {
-	return func(writer http.ResponseWriter, request *http.Request) error {
+
+func PublishHandlerWithGoHttp(manager *LongpollManager) func(writer http.ResponseWriter, request *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
 		ctx := makeContextByGoHttp(writer, request)
-		return manager.PublishHandler(ctx)
+		manager.PublishHandler(ctx)
 	}
 }
 
