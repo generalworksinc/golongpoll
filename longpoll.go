@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gofrs/uuid"
@@ -30,6 +31,7 @@ type HttpContext struct {
 	Method             string
 	Done               func() <-chan struct{}
 	URL                string
+	Callback           func(Events []*Event) error
 }
 
 func makeContextByGoHttp(writer http.ResponseWriter, request *http.Request) *HttpContext {
@@ -548,12 +550,17 @@ func getLongPollSubscriptionHandler(maxTimeoutSeconds int, subscriptionRequests 
 			// Consume event.  Subscription manager will automatically discard
 			// this client's channel upon sending event
 			// NOTE: event is actually []Event
-			if jsonData, err := json.Marshal(eventResponse{events}); err == nil {
-				io.WriteString(w, string(jsonData))
+			if ctx.Callback != nil {
+				return ctx.Callback(events)
 			} else {
-				io.WriteString(w, "{\"error\": \"json marshaller failed\"}")
-				return errors.New("json marshaller failed")
+				if jsonData, err := json.Marshal(eventResponse{events}); err == nil {
+					io.WriteString(w, string(jsonData))
+				} else {
+					io.WriteString(w, "{\"error\": \"json marshaller failed\"}")
+					return errors.New("json marshaller failed")
+				}
 			}
+
 		case <-disconnectNotify:
 			// Client connection closed before any events occurred and before
 			// the timeout was exceeded.  Tell manager to forget about this
