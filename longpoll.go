@@ -30,7 +30,8 @@ type HttpContext struct {
 	Method             string
 	Done               func() <-chan struct{}
 	URL                string
-	Callback           func(Events []*Event) error
+	Callback           func(HttpContext *HttpContext, Events []*Event) error
+	Ctx                interface{}
 }
 
 func makeContextByGoHttp(writer http.ResponseWriter, request *http.Request) *HttpContext {
@@ -550,7 +551,7 @@ func getLongPollSubscriptionHandler(maxTimeoutSeconds int, subscriptionRequests 
 			// this client's channel upon sending event
 			// NOTE: event is actually []Event
 			if ctx.Callback != nil {
-				return ctx.Callback(events)
+				return ctx.Callback(ctx, events)
 			} else {
 				if jsonData, err := json.Marshal(eventResponse{events}); err == nil {
 					io.WriteString(w, string(jsonData))
